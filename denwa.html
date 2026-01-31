@@ -3,32 +3,35 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>QR WebRTC Talk</title>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <title>QR WebRTC</title>
+  <script src="https://cdn.jsdelivr.net/npm/davidshimjs-qrcodejs@0.0.2/qrcode.min.js"></script>
   <style>
-    body { font-family: sans-serif; text-align: center; padding: 20px; }
-    textarea { width: 90%; height: 60px; margin: 10px 0; }
-    #qrcode { display: flex; justify-content: center; margin: 20px 0; }
-    button { padding: 10px 20px; margin: 5px; cursor: pointer; }
-    canvas { max-width: 100%; }
+    body { font-family: sans-serif; text-align: center; padding: 10px; }
+    textarea { width: 90%; height: 80px; margin: 10px 0; font-size: 12px; }
+    #qrcode { display: flex; justify-content: center; margin: 15px 0; min-height: 256px; background: #eee; }
+    button { padding: 12px; margin: 5px; width: 90%; max-width: 300px; cursor: pointer; }
+    audio { width: 90%; margin: 10px 0; }
   </style>
 </head>
 <body>
-  <h2>QR通信通話</h2>
-  <audio id="v" autoplay controls></audio><br>
+  <h3>QR通話システム</h3>
+  <audio id="v" autoplay controls></audio>
   
-  <div id="qrcode"></div>
+  <div id="qrcode">ここにQRが出ます</div>
   
-  <textarea id="t" placeholder="相手のQRを読み取った文字をここに貼り付け"></textarea><br>
+  <textarea id="t" placeholder="ここに貼り付け"></textarea>
   
-  <button onclick="offer()">1. 発信（QR作成）</button>
-  <button onclick="answer()">2. 着信（貼り付け→QR作成）</button>
-  <button onclick="connect()">3. 完了（貼り付け）</button>
+  <button onclick="offer()">1. 発信（自分のQRを出す）</button>
+  <button onclick="answer()">2. 着信（貼ってから押す→QR出す）</button>
+  <button onclick="connect()">3. 完了（貼ってから押す）</button>
 
   <script>
     const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
     
-    pc.ontrack = e => document.getElementById('v').srcObject = e.streams[0];
+    pc.ontrack = e => {
+      console.log("音声を受信しました");
+      document.getElementById('v').srcObject = e.streams[0];
+    };
 
     async function getMic() {
       const s = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -36,12 +39,18 @@
     }
 
     function makeQR(text) {
-      document.getElementById('qrcode').innerHTML = "";
-      new QRCode(document.getElementById("qrcode"), {
-        text: text,
-        width: 256,
-        height: 256
-      });
+      const container = document.getElementById('qrcode');
+      container.innerHTML = ""; // クリア
+      try {
+        new QRCode(container, {
+          text: text,
+          width: 256,
+          height: 256,
+          correctLevel : QRCode.CorrectLevel.L // 文字量が多いのでエラー訂正レベルを下げる
+        });
+      } catch (e) {
+        alert("QR作成エラー: 文字が長すぎます。画面を広くしてください。");
+      }
     }
 
     async function offer() {
@@ -54,9 +63,10 @@
     }
 
     async function answer() {
+      const val = document.getElementById('t').value;
+      if(!val) return alert("テキストエリアに貼り付けてください");
       await getMic();
-      const input = document.getElementById('t').value;
-      await pc.setRemoteDescription(JSON.parse(input));
+      await pc.setRemoteDescription(JSON.parse(val));
       const a = await pc.createAnswer();
       await pc.setLocalDescription(a);
       pc.onicecandidate = e => {
@@ -65,9 +75,10 @@
     }
 
     function connect() {
-      const input = document.getElementById('t').value;
-      pc.setRemoteDescription(JSON.parse(input));
-      alert("接続完了！話しかけてみてください。");
+      const val = document.getElementById('t').value;
+      if(!val) return alert("テキストエリアに貼り付けてください");
+      pc.setRemoteDescription(JSON.parse(val));
+      alert("接続設定完了！");
     }
   </script>
 </body>
