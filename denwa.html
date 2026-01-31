@@ -1,15 +1,173 @@
-// 修正版：ネットワークの断片（Candidate）が集まるのを待たずにQRを出す
-  const s=(isOffer)=>{
-    const gen = () => {
-      const sdp = JSON.stringify(pc.localDescription);
-      const url = window.location.origin + window.location.pathname + '?s=' + btoa(sdp);
-      t.value = url;
-      qd.innerHTML = "";
-      new QRCode(qd, { text: url, width: 200, height: 200 });
-      if(isOffer) { b3.disabled = false; }
-    };
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QR P2P Phone</title>
+<style>
+  body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 20px; background: #fff; text-align: center; height: 100vh; margin: 0; box-sizing: border-box; }
+  
+  /* カメラ映像（鏡のように反転） */
+  video { width: 100%; max-width: 320px; border-radius: 12px; background: #000; transform: scaleX(-1); margin-bottom: 10px; box-shadow: 0 4px 10px rgba(0,0,0,0.2); }
+  
+  /* QRコード表示エリア */
+  #q { margin: 10px auto; padding: 10px; width: 220px; height: 220px; border: 1px solid #eee; display: flex; align-items: center; justify-content: center; background: #fff; border-radius: 8px; }
+  
+  /* メインボタン */
+  button { width: 100%; max-width: 320px; height: 56px; cursor: pointer; border: none; border-radius: 28px; background: #000; color: #fff; font-weight: bold; font-size: 16px; transition: transform 0.1s; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+  button:active { transform: scale(0.98); }
+  button:disabled { background: #ccc; cursor: default; }
+
+  /* 裏方（隠し要素） */
+  #t { width: 1px; height: 1px; opacity: 0; position: absolute; }
+  #v { display: none; }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+</head>
+<body>
+
+<video id="p" autoplay playsinline muted></video>
+<div id="q">ここにQRが出ます</div>
+
+<button id="b" onclick="start()">1. Start & Scan</button>
+
+<audio id="v" autoplay></audio>
+<textarea id="t"></textarea>
+
+<script>
+  // 基本設定
+  const pc = new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'}]});
+  const t = document.getElementById('t');
+  const p = document.getElementById('p');
+  const b = document.getElementById('b');
+  const qd = document.getElementById('q');
+  let scanning = false;
+  let isConnected = false;
+
+  // 相手の声が届いたら再生
+  pc.ontrack = e => document.getElementById('v').srcObject = e.streams[0];
+
+  // URLにデータがあるかチェック（iPhone側かどうか）
+  const urlParams = new URLSearchParams(window.location.search);
+  const isAnswerSide = urlParams.has('s');
+
+  if (isAnswerSide) { 
+    t.value = atob(urlParams.get('s'));
+    b.innerText = "2. Start Answer";
+  }
+
+  // ■ QR生成の心臓部（ここを修正済み）
+  const s = (isOffer) => {
+    let qrGenerated = false;
     
-    // 住所の一部が確定した瞬間、または1秒後に強制的にQRを生成
-    pc.onicecandidate = e => { if(!e.candidate) gen(); };
+    const gen = () => {
+      if (qrGenerated) return; // 二重生成防止
+      qrGenerated = true;
+      
+      const sdp = JSON.stringify(pc.localDescription);
+      // 文字数削減のためURL生成
+      const url = window.location.origin + window.location.pathname + '?s=' + btoa(sdp);
+      
+      qd.innerHTML = "";
+      new QRCode(qd, { text: url, width: 200, height: 200, correctLevel: QRCode.CorrectLevel.L });
+      
+      if (isOffer) {
+        b.innerText = "Scan Partner's QR";
+      } else {
+        b.innerText = "Show this QR to PC";
+      }
+      // QRが出たらスキャン開始
+      startScan();
+    };
+
+    // 候補が見つかるたびにチェックするが、遅い場合は1秒後に強制実行
+    pc.onicecandidate = e => { if (!e.candidate) gen(); };
     setTimeout(gen, 1000); 
   };
+
+  // ■ 開始処理
+  async function start() {
+    try {
+      b.disabled = true;
+      b.innerText = "Camera Starting...";
+      
+      // カメラ起動
+      const stream = await navigator.mediaDevices.getUserMedia({audio: true, video: {facingMode: "user"}});
+      p.srcObject = stream;
+      
+      // 音声を回線に乗せる
+      stream.getTracks().forEach(tr => { if(tr.kind === 'audio') pc.addTrack(tr, stream); });
+
+      if (isAnswerSide) {
+        // iPhone側: 届いた情報をセットして返事を作る
+        await pc.setRemoteDescription(JSON.parse(t.value));
+        await pc.setLocalDescription(await pc.createAnswer());
+        s(false);
+      } else {
+        // PC側: 自分から発信する
+        await pc.setLocalDescription(await pc.createOffer());
+        s(true);
+      }
+    } catch (e) {
+      alert("カメラの起動に失敗しました: " + e);
+      b.disabled = false;
+      b.innerText = "Retry";
+    }
+  }
+
+  // ■ スキャン処理（相手のQRを読み取る）
+  function startScan() {
+    if (scanning || isConnected) return;
+    scanning = true;
+    
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+
+    const tick = () => {
+      if (!scanning || isConnected) return;
+      
+      if (p.readyState === p.HAVE_ENOUGH_DATA) {
+        canvas.height = p.videoHeight;
+        canvas.width = p.videoWidth;
+        ctx.drawImage(p, 0, 0, canvas.width, canvas.height);
+        
+        // QRコードを探す
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const code = jsQR(imageData.data, canvas.width, canvas.height, { inversionAttempts: "dontInvert" });
+        
+        if (code) {
+          // QRが見つかったらURLかチェック
+          try {
+            const urlObj = new URL(code.data);
+            const res = urlObj.searchParams.get('s');
+            if (res) {
+              // 自分が出したQRと同じじゃないか確認（誤爆防止）
+              if (res !== btoa(JSON.stringify(pc.localDescription))) {
+                 connect(atob(res));
+                 return;
+              }
+            }
+          } catch(e) { /* 無関係なQRは無視 */ }
+        }
+      }
+      requestAnimationFrame(tick);
+    };
+    tick();
+  }
+
+  // ■ 接続完了処理
+  function connect(sdp) {
+    if (isConnected) return;
+    isConnected = true;
+    scanning = false;
+    
+    pc.setRemoteDescription(JSON.parse(sdp));
+    b.innerText = "CONNECTED!";
+    b.style.background = "#28a745"; // 緑色に変更
+    qd.innerHTML = "<div style='font-size:40px'>📞</div>"; // QRを電話アイコンに
+    alert("つながりました！");
+  }
+</script>
+</body>
+</html>
