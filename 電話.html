@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QR WebRTC Talk</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <style>
+    body { font-family: sans-serif; text-align: center; padding: 20px; }
+    textarea { width: 90%; height: 60px; margin: 10px 0; }
+    #qrcode { display: flex; justify-content: center; margin: 20px 0; }
+    button { padding: 10px 20px; margin: 5px; cursor: pointer; }
+    canvas { max-width: 100%; }
+  </style>
+</head>
+<body>
+  <h2>QR通信通話</h2>
+  <audio id="v" autoplay controls></audio><br>
+  
+  <div id="qrcode"></div>
+  
+  <textarea id="t" placeholder="相手のQRを読み取った文字をここに貼り付け"></textarea><br>
+  
+  <button onclick="offer()">1. 発信（QR作成）</button>
+  <button onclick="answer()">2. 着信（貼り付け→QR作成）</button>
+  <button onclick="connect()">3. 完了（貼り付け）</button>
+
+  <script>
+    const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+    
+    pc.ontrack = e => document.getElementById('v').srcObject = e.streams[0];
+
+    async function getMic() {
+      const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+      s.getTracks().forEach(t => pc.addTrack(t, s));
+    }
+
+    function makeQR(text) {
+      document.getElementById('qrcode').innerHTML = "";
+      new QRCode(document.getElementById("qrcode"), {
+        text: text,
+        width: 256,
+        height: 256
+      });
+    }
+
+    async function offer() {
+      await getMic();
+      const o = await pc.createOffer();
+      await pc.setLocalDescription(o);
+      pc.onicecandidate = e => {
+        if(!e.candidate) makeQR(JSON.stringify(pc.localDescription));
+      };
+    }
+
+    async function answer() {
+      await getMic();
+      const input = document.getElementById('t').value;
+      await pc.setRemoteDescription(JSON.parse(input));
+      const a = await pc.createAnswer();
+      await pc.setLocalDescription(a);
+      pc.onicecandidate = e => {
+        if(!e.candidate) makeQR(JSON.stringify(pc.localDescription));
+      };
+    }
+
+    function connect() {
+      const input = document.getElementById('t').value;
+      pc.setRemoteDescription(JSON.parse(input));
+      alert("接続完了！話しかけてみてください。");
+    }
+  </script>
+</body>
+</html>
