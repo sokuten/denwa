@@ -3,53 +3,49 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Short QR WebRTC</title>
+  <title>Ultra Short QR</title>
   <script src="https://cdn.jsdelivr.net/npm/davidshimjs-qrcodejs@0.0.2/qrcode.min.js"></script>
   <style>
-    body { font-family: sans-serif; text-align: center; padding: 10px; background: #f0f0f0; }
-    #qrcode { display: flex; justify-content: center; margin: 15px 0; padding: 10px; background: white; min-height: 256px; }
-    textarea { width: 90%; height: 60px; margin: 10px 0; }
-    button { padding: 15px; margin: 5px; width: 90%; max-width: 300px; font-weight: bold; }
+    body { font-family: sans-serif; text-align: center; padding: 10px; background: #fafafa; }
+    #qrcode { display: flex; justify-content: center; margin: 15px 0; padding: 10px; background: white; min-height: 256px; border: 1px solid #ddd; }
+    textarea { width: 90%; height: 60px; margin: 10px 0; border-radius: 5px; border: 1px solid #ccc; }
+    button { padding: 15px; margin: 5px; width: 90%; max-width: 300px; font-weight: bold; border-radius: 8px; border: none; background: #007bff; color: white; cursor: pointer; }
+    button:active { background: #0056b3; }
   </style>
 </head>
 <body>
-  <h3>短縮QR通話</h3>
+  <h3>最小QR通話</h3>
   <audio id="v" autoplay controls></audio>
-  <div id="qrcode"></div>
-  <textarea id="t" placeholder="貼り付けエリア"></textarea><br>
+  <div id="qrcode">ボタンを押してマイクを許可</div>
+  <textarea id="t" placeholder="ここに貼り付け"></textarea><br>
   
   <button onclick="offer()">1. 発信（QR作成）</button>
   <button onclick="answer()">2. 着信（貼ってから押す）</button>
   <button onclick="connect()">3. 完了（貼ってから押す）</button>
 
   <script>
-    const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
-    pc.ontrack = e => document.getElementById('v').srcObject = e.streams[0];
+    const config = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+    let pc = new RTCPeerConnection(config);
+
+    pc.ontrack = e => {
+      document.getElementById('v').srcObject = e.streams[0];
+    };
 
     async function getMic() {
       const s = await navigator.mediaDevices.getUserMedia({ audio: true });
       s.getTracks().forEach(t => pc.addTrack(t, s));
     }
 
-    // 不要な情報を削ってQRを読みやすくする関数
-    function compressSDP(sdp) {
-      return sdp.split('\r\n').filter(line => 
-        line.startsWith('v=') || line.startsWith('o=') || line.startsWith('s=') || 
-        line.startsWith('t=') || line.startsWith('m=') || line.startsWith('c=') || 
-        line.startsWith('a=rtpmap') || line.startsWith('a=fmtp') || line.startsWith('a=setup') ||
-        line.startsWith('a=mid') || line.startsWith('a=sctp-port') || line.startsWith('a=fingerprint') ||
-        line.startsWith('a=ice-ufrag') || line.startsWith('a=ice-pwd') || line.startsWith('a=candidate')
-      ).join('\n');
-    }
-
     function makeQR(desc) {
       const container = document.getElementById('qrcode');
       container.innerHTML = "";
+      // データを短くするために不要な改行やスペースを消す
+      const shortData = btoa(JSON.stringify({t: desc.type, s: desc.sdp}));
       new QRCode(container, {
-        text: JSON.stringify(desc),
+        text: shortData,
         width: 256,
         height: 256,
-        correctLevel : QRCode.CorrectLevel.L // 密度を下げる
+        correctLevel : QRCode.CorrectLevel.L
       });
     }
 
@@ -57,25 +53,29 @@
       await getMic();
       const o = await pc.createOffer();
       await pc.setLocalDescription(o);
+      // 全ての通信経路(ICE)が集まるまで待ってからQRを出す（これが短縮のコツ）
       pc.onicecandidate = e => {
-        if(!e.candidate) makeQR(pc.localDescription);
+        if (!e.candidate) makeQR(pc.localDescription);
       };
     }
 
     async function answer() {
       const val = document.getElementById('t').value;
+      const data = JSON.parse(atob(val));
       await getMic();
-      await pc.setRemoteDescription(JSON.parse(val));
+      await pc.setRemoteDescription({type: data.t, sdp: data.s});
       const a = await pc.createAnswer();
       await pc.setLocalDescription(a);
       pc.onicecandidate = e => {
-        if(!e.candidate) makeQR(pc.localDescription);
+        if (!e.candidate) makeQR(pc.localDescription);
       };
     }
 
     function connect() {
-      pc.setRemoteDescription(JSON.parse(document.getElementById('t').value));
-      alert("接続しました");
+      const val = document.getElementById('t').value;
+      const data = JSON.parse(atob(val));
+      pc.setRemoteDescription({type: data.t, sdp: data.s});
+      alert("接続完了！");
     }
   </script>
 </body>
