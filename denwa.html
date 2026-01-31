@@ -3,14 +3,23 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>QR Phone (Final)</title>
+<title>QR Phone (Light)</title>
 <style>
   body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 10px; background: #fff; text-align: center; height: 100vh; margin: 0; }
+  
+  /* PCのカメラ映像 */
   video { width: 90%; max-width: 320px; border-radius: 12px; background: #000; transform: scaleX(-1); margin-bottom: 10px; }
-  #q { margin: 10px auto; padding: 5px; width: 260px; height: 260px; border: 2px solid #333; display: flex; align-items: center; justify-content: center; background: #fff; border-radius: 8px; }
+  
+  /* QR表示エリア */
+  #q { margin: 10px auto; padding: 5px; width: 260px; height: 260px; border: 4px solid #333; display: flex; align-items: center; justify-content: center; background: #fff; border-radius: 8px; }
+  
+  /* ボタン */
   button { width: 90%; max-width: 320px; height: 60px; cursor: pointer; border: none; border-radius: 30px; background: #000; color: #fff; font-weight: bold; font-size: 18px; }
   button:disabled { background: #999; }
   #t { position: absolute; opacity: 0; pointer-events: none; }
+  
+  /* 読み取り成功時の枠線アニメーション */
+  .scan-ok { border-color: #28a745 !important; background: #e8f5e9 !important; }
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
@@ -19,7 +28,7 @@
 <body>
 
 <video id="p" autoplay playsinline muted></video>
-<div id="q">ここにQRが出ます</div>
+<div id="q">QR待機中...</div>
 <button id="b" onclick="start()">1. Start & Scan</button>
 <audio id="v" autoplay></audio>
 <textarea id="t"></textarea>
@@ -32,7 +41,7 @@
 
   pc.ontrack = e => document.getElementById('v').srcObject = e.streams[0];
 
-  // URLに圧縮データがあれば解凍してセット
+  // URLパラメータ処理
   const urlParams = new URLSearchParams(window.location.search);
   const compressed = urlParams.get('s');
   if (compressed) {
@@ -42,23 +51,35 @@
     } catch(e) {}
   }
 
-  // ■ 圧縮QR生成
+  // ■ 軽量化＆QR生成
   const s = (isOffer) => {
     let done = false;
     const gen = () => {
       if (done) return; done = true;
-      const sdp = JSON.stringify(pc.localDescription);
-      // データを圧縮してURLにする
-      const zip = LZString.compressToEncodedURIComponent(sdp);
-      const url = window.location.origin + window.location.pathname + '?s=' + zip;
+      
+      // 1. データをダイエット（TCP候補を削除）
+      let sdpJson = JSON.stringify(pc.localDescription);
+      let sdpObj = JSON.parse(sdpJson);
+      sdpObj.sdp = sdpObj.sdp.replace(/a=candidate:.* tcp .*\r\n/g, ""); 
+      
+      // 2. データを圧縮
+      const zip = LZString.compressToEncodedURIComponent(JSON.stringify(sdpObj));
+      
+      let textToEncode = "";
+      // 【重要】PCへの返信(Answer)なら、URLを付けずにデータだけ送る！これでQRがスカスカになる
+      if (isOffer) {
+        textToEncode = window.location.origin + window.location.pathname + '?s=' + zip;
+      } else {
+        textToEncode = zip; 
+      }
       
       qd.innerHTML = "";
-      new QRCode(qd, { text: url, width: 250, height: 250, correctLevel: QRCode.CorrectLevel.L });
+      new QRCode(qd, { text: textToEncode, width: 250, height: 250, correctLevel: QRCode.CorrectLevel.L });
       b.innerText = isOffer ? "Scan Partner's QR" : "Show this QR to PC";
       startScan();
     };
     pc.onicecandidate = e => { if (!e.candidate) gen(); };
-    setTimeout(gen, 1000); // 1秒で強制表示
+    setTimeout(gen, 1000);
   };
 
   async function start() {
@@ -68,11 +89,11 @@
       p.srcObject = stream;
       stream.getTracks().forEach(tr => { if(tr.kind === 'audio') pc.addTrack(tr, stream); });
 
-      if (compressed) { // Answer側
+      if (compressed) { // iPhone側
         await pc.setRemoteDescription(JSON.parse(t.value));
         await pc.setLocalDescription(await pc.createAnswer());
         s(false);
-      } else { // Offer側
+      } else { // PC側
         await pc.setLocalDescription(await pc.createOffer());
         s(true);
       }
@@ -82,22 +103,39 @@
   function startScan() {
     if (scanning) return; scanning = true;
     const ctx = document.createElement("canvas").getContext("2d");
+    
     const tick = () => {
       if (p.readyState === p.HAVE_ENOUGH_DATA) {
         ctx.canvas.width = p.videoWidth; ctx.canvas.height = p.videoHeight;
         ctx.drawImage(p, 0, 0);
-        const code = jsQR(ctx.getImageData(0, 0, ctx.canvas.width, ctx.canvas.height).data, ctx.canvas.width, ctx.canvas.height);
+        
+        const imageData = ctx.getImageData(0, 0, ctx.canvas.width, ctx.canvas.height);
+        const code = jsQR(imageData.data, ctx.canvas.width, ctx.canvas.height);
+        
         if (code) {
-          const res = new URL(code.data).searchParams.get('s');
-          if (res) {
-            const data = LZString.decompressFromEncodedURIComponent(res);
-            // 自分のQRを読み込まないようにチェック
-            if (!JSON.stringify(pc.localDescription).includes(data.substring(0,20))) {
-               pc.setRemoteDescription(JSON.parse(data));
-               b.innerText = "CONNECTED!"; b.style.background = "#28a745"; qd.innerHTML = "🎉";
-               return;
+          let data = code.data;
+          
+          // URL形式なら中身を取り出す
+          try {
+             const urlObj = new URL(data);
+             const param = urlObj.searchParams.get('s');
+             if (param) data = param;
+          } catch(e) {} // URLじゃなければそのままデータとして使う
+          
+          // 解凍＆接続トライ
+          try {
+            const decompressed = LZString.decompressFromEncodedURIComponent(data);
+            if (decompressed) {
+               // 自分のQRを読み込まないようにチェック
+               if (!JSON.stringify(pc.localDescription).includes(decompressed.substring(0,20))) {
+                 // 成功！
+                 pc.setRemoteDescription(JSON.parse(decompressed));
+                 b.innerText = "CONNECTED!"; b.style.background = "#28a745"; 
+                 qd.innerHTML = "<div style='font-size:80px'>🎉</div>"; qd.className = "scan-ok";
+                 return; // ループ終了
+               }
             }
-          }
+          } catch(e) {}
         }
       }
       requestAnimationFrame(tick);
