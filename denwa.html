@@ -1,50 +1,25 @@
 <!DOCTYPE html>
 <html>
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<style>
-  body { display: flex; flex-direction: column; align-items: center; padding: 20px; font-family: sans-serif; }
-  textarea { width: 100%; height: 100px; margin-bottom: 10px; border: 1px solid #ccc; }
-  button { width: 100%; height: 50px; margin: 5px 0; font-size: 16px; cursor: pointer; }
-  audio { display: none; } /* 音声はバックグラウンドで流す */
-</style>
-</head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><style>
+  body{font-family:sans-serif;display:flex;flex-direction:column;padding:10px;gap:5px}
+  textarea{height:80px;border:1px solid #ccc;border-radius:4px}
+  button{height:44px;cursor:pointer;background:#eee;border:1px solid #ccc;border-radius:4px}
+  .c{background:#444;color:#fff} /* Copyボタンを強調 */
+</style></head>
 <body>
-
 <textarea id="t" placeholder="Paste Here"></textarea>
+<button class="c" onclick="cp()">Copy</button>
 <button onclick="o()">1. Offer</button>
 <button onclick="a()">2. Answer</button>
 <button onclick="c()">3. Connect</button>
 <audio id="v" autoplay></audio>
-
 <script>
-  const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
-  pc.ontrack = e => document.getElementById('v').srcObject = e.streams[0];
-  const t = document.getElementById('t');
-
-  async function m() {
-    const s = await navigator.mediaDevices.getUserMedia({ audio: true });
-    s.getTracks().forEach(tr => pc.addTrack(tr, s));
-  }
-
-  async function o() {
-    await m();
-    await pc.setLocalDescription(await pc.createOffer());
-    pc.onicecandidate = e => { if(!e.candidate) t.value = JSON.stringify(pc.localDescription) };
-  }
-
-  async function a() {
-    await m();
-    await pc.setRemoteDescription(JSON.parse(t.value));
-    await pc.setLocalDescription(await pc.createAnswer());
-    pc.onicecandidate = e => { if(!e.candidate) t.value = JSON.stringify(pc.localDescription) };
-  }
-
-  function c() {
-    pc.setRemoteDescription(JSON.parse(t.value));
-    t.value = ''; // 完了したらクリア
-  }
-</script>
-</body>
-</html>
+  const pc=new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'}]}), t=document.getElementById('t');
+  pc.ontrack=e=>document.getElementById('v').srcObject=e.streams[0];
+  const m=async()=>(await navigator.mediaDevices.getUserMedia({audio:true})).getTracks().forEach(tr=>pc.addTrack(tr,new MediaStream()));
+  const s=(d)=>{pc.onicecandidate=e=>{if(!e.candidate)t.value=JSON.stringify(pc.localDescription)}};
+  async function o(){await m();await pc.setLocalDescription(await pc.createOffer());s()}
+  async function a(){await m();await pc.setRemoteDescription(JSON.parse(t.value));await pc.setLocalDescription(await pc.createAnswer());s()}
+  function c(){pc.setRemoteDescription(JSON.parse(t.value));t.value='CONNECTED'}
+  function cp(){t.select();document.execCommand('copy');const b=event.target;b.innerText='Done';setTimeout(()=>b.innerText='Copy',1000)}
+</script></body></html>
