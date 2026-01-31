@@ -3,25 +3,27 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>QR P2P Phone (Lite)</title>
+<title>QR P2P Phone (Zip)</title>
 <style>
   body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 10px; background: #fff; text-align: center; height: 100vh; margin: 0; }
   
   /* カメラ映像 */
   video { width: 90%; max-width: 320px; border-radius: 12px; background: #000; transform: scaleX(-1); box-shadow: 0 4px 10px rgba(0,0,0,0.2); }
   
-  /* QRコードエリア（少し大きくしました） */
+  /* QRコードエリア */
   #q { margin: 15px auto; padding: 10px; width: 260px; height: 260px; border: 2px solid #333; display: flex; align-items: center; justify-content: center; background: #fff; border-radius: 8px; }
   
   /* ボタン */
   button { width: 90%; max-width: 320px; height: 60px; cursor: pointer; border: none; border-radius: 30px; background: #000; color: #fff; font-weight: bold; font-size: 18px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
   button:disabled { background: #999; }
+  button.connected { background: #28a745; }
 
   #t { position: absolute; opacity: 0; pointer-events: none; }
   #v { display: none; }
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/lz-string/1.4.4/lz-string.min.js"></script>
 </head>
 <body>
 
@@ -44,23 +46,22 @@
 
   pc.ontrack = e => document.getElementById('v').srcObject = e.streams[0];
 
+  // URLパラメータ処理（圧縮データを解凍して復元）
   const urlParams = new URLSearchParams(window.location.search);
-  const isAnswerSide = urlParams.has('s');
+  const compressedParam = urlParams.get('s');
 
-  if (isAnswerSide) { 
-    t.value = atob(urlParams.get('s'));
-    b.innerText = "2. Start Answer";
+  if (compressedParam) { 
+    try {
+      // 圧縮されたデータを元のJSONに戻す
+      const decompressed = LZString.decompressFromEncodedURIComponent(compressedParam);
+      if (decompressed) {
+        t.value = decompressed;
+        b.innerText = "2. Start Answer";
+      }
+    } catch(e) { console.error("Decompress error", e); }
   }
 
-  // ■ データのダイエット関数（ここが重要！）
-  function cleanSDP(sdp) {
-    return sdp
-      .replace(/a=fmtp:.*\r\n/g, "")     // 詳細コーデック設定を削除
-      .replace(/a=rtcp-fb:.*\r\n/g, "")  // 品質フィードバック設定を削除
-      .replace(/a=extmap:.*\r\n/g, "")   // 拡張ヘッダを削除
-      .replace(/candidate:.* tcp .*\r\n/g, ""); // TCP候補（重い）を削除
-  }
-
+  // ■ QR生成処理（ここでデータをギュッと圧縮します）
   const s = (isOffer) => {
     let qrGenerated = false;
     
@@ -68,89 +69,6 @@
       if (qrGenerated) return; 
       qrGenerated = true;
       
-      // 元のSDPをダイエットさせてからURLにする
-      const rawSdp = JSON.stringify(pc.localDescription);
-      const dietSdp = cleanSDP(JSON.parse(rawSdp).sdp);
-      const minimalDesc = { type: JSON.parse(rawSdp).type, sdp: dietSdp };
+      const sdpJson = JSON.stringify(pc.localDescription);
       
-      const url = window.location.origin + window.location.pathname + '?s=' + btoa(JSON.stringify(minimalDesc));
-      
-      // QR生成（サイズを250pxに拡大）
-      qd.innerHTML = "";
-      new QRCode(qd, { text: url, width: 250, height: 250, correctLevel: QRCode.CorrectLevel.L });
-      
-      b.innerText = isOffer ? "Scan Partner's QR" : "Show this QR to PC";
-      startScan();
-    };
-
-    pc.onicecandidate = e => { if (!e.candidate) gen(); };
-    setTimeout(gen, 1000); 
-  };
-
-  async function start() {
-    try {
-      b.disabled = true;
-      b.innerText = "Camera Starting...";
-      const stream = await navigator.mediaDevices.getUserMedia({audio: true, video: {facingMode: "user"}});
-      p.srcObject = stream;
-      stream.getTracks().forEach(tr => { if(tr.kind === 'audio') pc.addTrack(tr, stream); });
-
-      if (isAnswerSide) {
-        await pc.setRemoteDescription(JSON.parse(t.value));
-        await pc.setLocalDescription(await pc.createAnswer());
-        s(false);
-      } else {
-        await pc.setLocalDescription(await pc.createOffer());
-        s(true);
-      }
-    } catch (e) { alert("Error: " + e); b.disabled = false; }
-  }
-
-  function startScan() {
-    if (scanning || isConnected) return;
-    scanning = true;
-    const canvas = document.createElement("canvas");
-    const ctx = canvas.getContext("2d");
-
-    const tick = () => {
-      if (!scanning || isConnected) return;
-      if (p.readyState === p.HAVE_ENOUGH_DATA) {
-        canvas.height = p.videoHeight; canvas.width = p.videoWidth;
-        ctx.drawImage(p, 0, 0, canvas.width, canvas.height);
-        
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const code = jsQR(imageData.data, canvas.width, canvas.height, { inversionAttempts: "dontInvert" });
-        
-        if (code) {
-          try {
-            const urlObj = new URL(code.data);
-            const res = urlObj.searchParams.get('s');
-            if (res) {
-              const myData = btoa(JSON.stringify(pc.localDescription || {}));
-              // 自分が出しているQRと中身が違う場合のみ反応（誤爆防止）
-              if (!myData.includes(res.substring(0, 20))) { 
-                 connect(atob(res));
-                 return;
-              }
-            }
-          } catch(e) {}
-        }
-      }
-      requestAnimationFrame(tick);
-    };
-    tick();
-  }
-
-  function connect(sdpJson) {
-    if (isConnected) return;
-    isConnected = true; scanning = false;
-    // ダイエットされたSDPを受け取る
-    pc.setRemoteDescription(JSON.parse(sdpJson));
-    b.innerText = "CONNECTED!";
-    b.style.background = "#28a745";
-    qd.innerHTML = "<div style='font-size:60px'>📞</div>";
-    alert("Connected!");
-  }
-</script>
-</body>
-</html>
+      // 【ここが新機能】データを圧縮して超短縮URL
