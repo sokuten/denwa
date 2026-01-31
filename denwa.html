@@ -1,41 +1,85 @@
 <!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><style>
-  body{font-family:sans-serif;display:flex;flex-direction:column;padding:20px;gap:15px;background:#fff;align-items:center}
-  textarea{width:100%;height:60px;border:1px solid #eee;font-size:10px;color:#999}
-  button{width:100%;max-width:300px;height:60px;cursor:pointer;border:none;border-radius:30px;background:#000;color:#fff;font-weight:bold;font-size:18px}
-  button:disabled{background:#ccc;cursor:not-allowed}
-  #v{display:none}
-</style></head>
+  body{font-family:sans-serif;display:flex;flex-direction:column;padding:10px;gap:10px;background:#fff;align-items:center;text-align:center}
+  video{width:100%;max-width:300px;border-radius:10px;background:#000;transform:scaleX(-1)} /* 自分のプレビュー */
+  #q{margin:10px;padding:10px;border:1px solid #eee} /* QR表示 */
+  button{width:100%;max-width:300px;height:50px;cursor:pointer;border:none;border-radius:25px;background:#000;color:#fff;font-weight:bold;font-size:16px}
+  #t{width:1px;height:1px;opacity:0} /* 裏側でデータを保持 */
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+</head>
 <body>
+<video id="p" autoplay playsinline muted></video> <div id="q"></div> <button id="b" onclick="start()">1. Start & Scan Partner</button>
 <audio id="v" autoplay></audio>
-<textarea id="t" placeholder="Waiting..."></textarea>
-<button id="b1" onclick="o()">1. Start Call</button>
-<button id="b2" onclick="a()" disabled>2. Answer</button>
-<button id="b3" onclick="c()" disabled>3. Connect</button>
+<textarea id="t"></textarea>
 
 <script>
-  const pc=new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'}]}), t=document.getElementById('t');
-  const b1=document.getElementById('b1'), b2=document.getElementById('b2'), b3=document.getElementById('b3');
+  const pc=new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'}]}), t=document.getElementById('t'), p=document.getElementById('p');
+  const b=document.getElementById('b'), qd=document.getElementById('q');
+  let scanning = false;
+
   pc.ontrack=e=>document.getElementById('v').srcObject=e.streams[0];
-  
-  // URLにデータがあれば、自動でAnswerボタンを有効化
+
+  // URLにデータがあればiPhoneモード
   const urlParams = new URLSearchParams(window.location.search);
   if (urlParams.has('s')) { 
     t.value = atob(urlParams.get('s'));
-    b1.disabled = true; b2.disabled = false;
+    b.innerText = "2. Answer & Scan PC";
   }
 
-  const m=async()=>(await navigator.mediaDevices.getUserMedia({audio:true})).getTracks().forEach(tr=>pc.addTrack(tr,new MediaStream()));
-  const s=(nextBtn)=>{pc.onicecandidate=e=>{if(!e.candidate){
-    const sdp = JSON.stringify(pc.localDescription);
-    t.value = window.location.origin + window.location.pathname + '?s=' + btoa(sdp);
-    t.select(); document.execCommand('copy');
-    alert("URL copied! Send it to partner.");
-    if(nextBtn) nextBtn.disabled = false;
-  }}};
+  async function start() {
+    const s = await navigator.mediaDevices.getUserMedia({audio:true, video:{facingMode:"user"}});
+    p.srcObject = s;
+    s.getTracks().forEach(tr => { if(tr.kind==='audio') pc.addTrack(tr, s); });
+    
+    if (urlParams.has('s')) { // iPhone側の処理
+      await pc.setRemoteDescription(JSON.parse(t.value));
+      await pc.setLocalDescription(await pc.createAnswer());
+    } else { // PC側の処理
+      await pc.setLocalDescription(await pc.createOffer());
+    }
+    
+    pc.onicecandidate = e => { if(!e.candidate) showQR(); };
+    startScan();
+  }
 
-  async function o(){ b1.innerText="Creating..."; await m(); await pc.setLocalDescription(await pc.createOffer()); s(b3); }
-  async function a(){ b2.innerText="Responding..."; await m(); await pc.setRemoteDescription(JSON.parse(t.value)); await pc.setLocalDescription(await pc.createAnswer()); s(); }
-  function c(){ pc.setRemoteDescription(JSON.parse(t.value)); b3.innerText="CONNECTED"; t.value=""; }
+  function showQR() {
+    const sdp = JSON.stringify(pc.localDescription);
+    const url = window.location.origin + window.location.pathname + '?s=' + btoa(sdp);
+    qd.innerHTML = "";
+    new QRCode(qd, { text: url, width: 200, height: 200 });
+  }
+
+  function startScan() {
+    scanning = true;
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    const tick = () => {
+      if (!scanning) return;
+      if (p.readyState === p.HAVE_ENOUGH_DATA) {
+        canvas.height = p.videoHeight; canvas.width = p.videoWidth;
+        ctx.drawImage(p, 0, 0, canvas.width, canvas.height);
+        const code = jsQR(ctx.getImageData(0, 0, canvas.width, canvas.height).data, canvas.width, canvas.height);
+        if (code) {
+          const res = new URL(code.data).searchParams.get('s');
+          if (res) {
+            connect(atob(res));
+            scanning = false;
+            return;
+          }
+        }
+      }
+      requestAnimationFrame(tick);
+    };
+    tick();
+  }
+
+  function connect(sdp) {
+    pc.setRemoteDescription(JSON.parse(sdp));
+    b.innerText = "CONNECTED!";
+    b.disabled = true;
+    qd.innerHTML = "✨ 接続完了 ✨";
+  }
 </script></body></html>
