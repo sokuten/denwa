@@ -1,25 +1,41 @@
 <!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><style>
-  body{font-family:sans-serif;display:flex;flex-direction:column;padding:10px;gap:5px}
-  textarea{height:80px;border:1px solid #ccc;border-radius:4px}
-  button{height:44px;cursor:pointer;background:#eee;border:1px solid #ccc;border-radius:4px}
-  .c{background:#444;color:#fff} /* Copyボタンを強調 */
+  body{font-family:sans-serif;display:flex;flex-direction:column;padding:20px;gap:15px;background:#fff;align-items:center}
+  textarea{width:100%;height:60px;border:1px solid #eee;font-size:10px;color:#999}
+  button{width:100%;max-width:300px;height:60px;cursor:pointer;border:none;border-radius:30px;background:#000;color:#fff;font-weight:bold;font-size:18px}
+  button:disabled{background:#ccc;cursor:not-allowed}
+  #v{display:none}
 </style></head>
 <body>
-<textarea id="t" placeholder="Paste Here"></textarea>
-<button class="c" onclick="cp()">Copy</button>
-<button onclick="o()">1. Offer</button>
-<button onclick="a()">2. Answer</button>
-<button onclick="c()">3. Connect</button>
 <audio id="v" autoplay></audio>
+<textarea id="t" placeholder="Waiting..."></textarea>
+<button id="b1" onclick="o()">1. Start Call</button>
+<button id="b2" onclick="a()" disabled>2. Answer</button>
+<button id="b3" onclick="c()" disabled>3. Connect</button>
+
 <script>
   const pc=new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'}]}), t=document.getElementById('t');
+  const b1=document.getElementById('b1'), b2=document.getElementById('b2'), b3=document.getElementById('b3');
   pc.ontrack=e=>document.getElementById('v').srcObject=e.streams[0];
+  
+  // URLにデータがあれば、自動でAnswerボタンを有効化
+  const urlParams = new URLSearchParams(window.location.search);
+  if (urlParams.has('s')) { 
+    t.value = atob(urlParams.get('s'));
+    b1.disabled = true; b2.disabled = false;
+  }
+
   const m=async()=>(await navigator.mediaDevices.getUserMedia({audio:true})).getTracks().forEach(tr=>pc.addTrack(tr,new MediaStream()));
-  const s=(d)=>{pc.onicecandidate=e=>{if(!e.candidate)t.value=JSON.stringify(pc.localDescription)}};
-  async function o(){await m();await pc.setLocalDescription(await pc.createOffer());s()}
-  async function a(){await m();await pc.setRemoteDescription(JSON.parse(t.value));await pc.setLocalDescription(await pc.createAnswer());s()}
-  function c(){pc.setRemoteDescription(JSON.parse(t.value));t.value='CONNECTED'}
-  function cp(){t.select();document.execCommand('copy');const b=event.target;b.innerText='Done';setTimeout(()=>b.innerText='Copy',1000)}
+  const s=(nextBtn)=>{pc.onicecandidate=e=>{if(!e.candidate){
+    const sdp = JSON.stringify(pc.localDescription);
+    t.value = window.location.origin + window.location.pathname + '?s=' + btoa(sdp);
+    t.select(); document.execCommand('copy');
+    alert("URL copied! Send it to partner.");
+    if(nextBtn) nextBtn.disabled = false;
+  }}};
+
+  async function o(){ b1.innerText="Creating..."; await m(); await pc.setLocalDescription(await pc.createOffer()); s(b3); }
+  async function a(){ b2.innerText="Responding..."; await m(); await pc.setRemoteDescription(JSON.parse(t.value)); await pc.setLocalDescription(await pc.createAnswer()); s(); }
+  function c(){ pc.setRemoteDescription(JSON.parse(t.value)); b3.innerText="CONNECTED"; t.value=""; }
 </script></body></html>
