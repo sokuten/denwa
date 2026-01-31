@@ -1,81 +1,50 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Simple Copy Talk</title>
-  <style>
-    body { font-family: sans-serif; text-align: center; padding: 20px; background: #f4f7f6; color: #333; }
-    h3 { color: #2c3e50; }
-    textarea { width: 100%; max-width: 400px; height: 120px; margin: 15px 0; border: 2px solid #bdc3c7; border-radius: 8px; padding: 10px; font-size: 14px; }
-    button { display: block; width: 100%; max-width: 420px; margin: 10px auto; padding: 15px; border: none; border-radius: 8px; color: white; font-weight: bold; font-size: 16px; cursor: pointer; }
-    .btn-offer { background: #3498db; }
-    .btn-answer { background: #2ecc71; }
-    .btn-connect { background: #e67e22; }
-    button:active { opacity: 0.8; }
-    .msg { font-size: 12px; color: #7f8c8d; margin-top: 5px; }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+  body { display: flex; flex-direction: column; align-items: center; padding: 20px; font-family: sans-serif; }
+  textarea { width: 100%; height: 100px; margin-bottom: 10px; border: 1px solid #ccc; }
+  button { width: 100%; height: 50px; margin: 5px 0; font-size: 16px; cursor: pointer; }
+  audio { display: none; } /* 音声はバックグラウンドで流す */
+</style>
 </head>
 <body>
-  <h3>コピペ通話システム</h3>
-  <audio id="v" autoplay controls></audio>
-  
-  <textarea id="t" placeholder="ここに相手からの文字を貼り付けてください"></textarea>
-  
-  <button class="btn-offer" onclick="offer()">1. 発信（文字を出す）</button>
-  <div class="msg">↑出た文字をコピーして相手に送る</div>
 
-  <button class="btn-answer" onclick="answer()">2. 着信（貼ってから押す）</button>
-  <div class="msg">↑貼ってから押すと、新しい文字に書き換わります。<br>それをコピーして相手に送り返す</div>
+<textarea id="t" placeholder="Paste Here"></textarea>
+<button onclick="o()">1. Offer</button>
+<button onclick="a()">2. Answer</button>
+<button onclick="c()">3. Connect</button>
+<audio id="v" autoplay></audio>
 
-  <button class="btn-connect" onclick="connect()">3. 完了（貼ってから押す）</button>
-  <div class="msg">↑返ってきた文字を貼ってから押すと通話開始</div>
+<script>
+  const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+  pc.ontrack = e => document.getElementById('v').srcObject = e.streams[0];
+  const t = document.getElementById('t');
 
-  <script>
-    const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
-    
-    pc.ontrack = e => document.getElementById('v').srcObject = e.streams[0];
+  async function m() {
+    const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+    s.getTracks().forEach(tr => pc.addTrack(tr, s));
+  }
 
-    async function getMic() {
-      const s = await navigator.mediaDevices.getUserMedia({ audio: true });
-      s.getTracks().forEach(t => pc.addTrack(t, s));
-    }
+  async function o() {
+    await m();
+    await pc.setLocalDescription(await pc.createOffer());
+    pc.onicecandidate = e => { if(!e.candidate) t.value = JSON.stringify(pc.localDescription) };
+  }
 
-    async function offer() {
-      await getMic();
-      const o = await pc.createOffer();
-      await pc.setLocalDescription(o);
-      pc.onicecandidate = e => {
-        if(!e.candidate) {
-          document.getElementById('t').value = JSON.stringify(pc.localDescription);
-          document.getElementById('t').select();
-          alert("文字が表示されました。コピーして送信してください。");
-        }
-      };
-    }
+  async function a() {
+    await m();
+    await pc.setRemoteDescription(JSON.parse(t.value));
+    await pc.setLocalDescription(await pc.createAnswer());
+    pc.onicecandidate = e => { if(!e.candidate) t.value = JSON.stringify(pc.localDescription) };
+  }
 
-    async function answer() {
-      const val = document.getElementById('t').value;
-      if(!val) return alert("まずは相手からの文字を貼り付けてください");
-      await getMic();
-      await pc.setRemoteDescription(JSON.parse(val));
-      const a = await pc.createAnswer();
-      await pc.setLocalDescription(a);
-      pc.onicecandidate = e => {
-        if(!e.candidate) {
-          document.getElementById('t').value = JSON.stringify(pc.localDescription);
-          document.getElementById('t').select();
-          alert("返信用の文字に書き換わりました。これをコピーして相手に送ってください。");
-        }
-      };
-    }
-
-    function connect() {
-      const val = document.getElementById('t').value;
-      if(!val) return alert("相手から返ってきた文字を貼り付けてください");
-      pc.setRemoteDescription(JSON.parse(val));
-      alert("接続完了！");
-    }
-  </script>
+  function c() {
+    pc.setRemoteDescription(JSON.parse(t.value));
+    t.value = ''; // 完了したらクリア
+  }
+</script>
 </body>
 </html>
